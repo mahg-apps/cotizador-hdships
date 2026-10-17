@@ -241,12 +241,15 @@ $('xlsx').addEventListener('change',async e=>{
   const f=e.target.files[0]; if(!f)return;
   const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});
   const ws=wb.Sheets[wb.SheetNames[0]];
-  const data=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}).filter(r=>r.some(c=>c!==''));
+  let data=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}).filter(r=>r.some(c=>c!==''));
+  const KW=/tarifa|precio|price|destino|destination|origen|origin|ruta|lane|planta|cruce|equipo/i; // salta el logo y los datos de arriba
+  let hi=data.findIndex(r=>r.filter(c=>c!=='').length>=3&&r.filter(c=>typeof c==='string'&&KW.test(c)).length>=2); if(hi<0)hi=0;
+  data=data.slice(hi);
   if(data.length<2){alert('El Excel no tiene filas de datos.');return}
   const cols=data[0].map(String);
   S.cols=cols; S.rows=data.slice(1).map(r=>cols.map((_,i)=>r[i]??''));
-  const hasPlanta=cols.some(c=>/^planta$/i.test(c.trim()));
-  S.show=cols.map(c=>!(hasPlanta&&/^origen$/i.test(c.trim())));
+  const hasPlanta=cols.some((c,i)=>/^planta$/i.test(c.trim())&&S.rows.some(r=>r[i]!==''));
+  S.show=cols.map((c,i)=>!(hasPlanta&&/^origen$/i.test(c.trim()))&&S.rows.some(r=>r[i]!==''));
   let r=cols.findIndex(c=>/tarifa|precio|price|costo|hd\s*ships?/i.test(c));
   if(r<0){for(let i=cols.length-1;i>=0;i--){if(S.rows.filter(x=>typeof x[i]==='number').length>S.rows.length/2){r=i;break}}}
   S.rate=r; S.file=f;
@@ -254,7 +257,8 @@ $('xlsx').addEventListener('change',async e=>{
   S.val=cols.findIndex((c,i)=>i!==r&&i!==S.eq&&/valor|value|mercanc|cargo\s*val|insured/i.test(c));
   if(S.val>=0)S.show[S.val]=false;
   $('xlsxName').textContent=f.name+' · '+S.rows.length+' filas';
-  if(r<0)log('⚠ No encontré la columna de tarifa en el Excel; márcala en la tabla.','er');
+  if(r<0)log('⚠ No encontré la columna de tarifa en el Excel; elígela arriba de la tabla.','er');
+  else if(!S.rows.some(x=>numOf(x[r])>0))log('⚠ No se leyeron precios en la columna de tarifa. Abre el Excel, guárdalo con Ctrl+S (para que calcule las fórmulas) y vuelve a cargarlo.','er');
   renderGrid(); render();
 });
 $('addRow').onclick=()=>{S.rows.push(S.cols.map(()=>''));renderGrid();render()};
