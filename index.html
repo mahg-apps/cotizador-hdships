@@ -147,6 +147,7 @@ table.ed th input{width:auto;margin:0 2px 0 0}
     <div class="row">
       <input type="file" id="xlsx" accept=".xlsx,.xls,.csv" style="display:none">
       <button class="btn" onclick="$('xlsx').click()">📂 Cargar Excel de precios</button>
+      <button class="btn alt" id="rmXlsx" style="display:none;background:#fee;color:#b00">🗑 Quitar Excel</button>
       <button class="btn alt" id="addRow">+ Fila</button>
       <span class="small" id="xlsxName">Sin archivo (puedes capturar a mano)</span>
     </div>
@@ -179,6 +180,7 @@ table.ed th input{width:auto;margin:0 2px 0 0}
     </div>
     <button class="btn big" id="go">Generar PDF · Guardar · Preparar correo</button>
     <div id="log"></div>
+    <button class="btn big" id="newQ" style="background:#c0392b;color:#fff;margin-top:18px">🗑 Borrar todo y empezar nueva cotización</button>
   </div>
 
   <div class="panel">
@@ -257,11 +259,18 @@ $('xlsx').addEventListener('change',async e=>{
   S.val=cols.findIndex((c,i)=>i!==r&&i!==S.eq&&/valor|value|mercanc|cargo\s*val|insured/i.test(c));
   if(S.val>=0)S.show[S.val]=false;
   S.obj=cols.findIndex((c,i)=>i!==r&&/objetivo|target/i.test(c)); if(S.obj>=0)S.show[S.obj]=false; // dato interno: nunca va al PDF
-  $('xlsxName').textContent=f.name+' · '+S.rows.length+' filas';
+  $('xlsxName').textContent=f.name+' · '+S.rows.length+' filas'; $('rmXlsx').style.display='';
   if(r<0)log('⚠ No encontré la columna de tarifa en el Excel; elígela arriba de la tabla.','er');
   else if(!S.rows.some(x=>numOf(x[r])>0))log('⚠ No se leyeron precios en la columna de tarifa. Abre el Excel, guárdalo con Ctrl+S (para que calcule las fórmulas) y vuelve a cargarlo.','er');
   renderGrid(); render();
 });
+$('xlsx').addEventListener('click',e=>{e.target.value=''}); // permite volver a elegir el mismo archivo
+function resetExcel(){
+  S={cols:['Origen','Destino','Tarifa HD'],rows:[['','','']],show:[true,true,true],rate:2,eq:-1,val:-1,obj:-1,file:null};
+  $('xlsx').value=''; $('xlsxName').textContent='Sin archivo (puedes capturar a mano)'; $('rmXlsx').style.display='none';
+  renderGrid(); render();
+}
+$('rmXlsx').onclick=()=>{if(confirm('¿Quitar el Excel cargado y limpiar la tabla?'))resetExcel()};
 $('addRow').onclick=()=>{S.rows.push(S.cols.map(()=>''));renderGrid();render()};
 function addCol(name,hidden){S.cols.push(name);S.rows.forEach(r=>r.push(''));S.show.push(!hidden);return S.cols.length-1}
 function renderGrid(){
@@ -467,8 +476,8 @@ async function makePdf(){
   holder.style.cssText='position:absolute;left:0;top:0;width:816px;background:#fff;z-index:-1';
   const el=$('quote').cloneNode(true); el.removeAttribute('id'); el.style.margin='0'; el.id='quote'; el.style.width='816px';
   $('quote').id='quote_live'; holder.appendChild(el); document.body.appendChild(holder); window.scrollTo(0,0);
-  const opt={margin:[6,0,14,0],image:{type:'jpeg',quality:.96},
-    html2canvas:{scale:2,useCORS:true,windowWidth:816,scrollX:0,scrollY:0,x:0,y:0},
+  const opt={margin:[6,0,14,0],image:{type:'jpeg',quality:.85},
+    html2canvas:{scale:1.6,useCORS:true,windowWidth:816,scrollX:0,scrollY:0,x:0,y:0},
     jsPDF:{unit:'mm',format:'letter',orientation:'portrait'},
     pagebreak:{mode:['css','legacy'],avoid:['.avoid','tr']}};
   const w=html2pdf().set(opt).from(el).toPdf().get('pdf').then(pdf=>{
@@ -494,8 +503,8 @@ function mailLink(){
   return $('outlook').value==='Web'?`https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&${q}`:`mailto:${to}?${q}`;
 }
 const OUTLOOK_DEF={MARIO:'Escritorio',DANIEL:'Web',JAMES:'Web'};
-async function buildEml(atts){
-  const fol=folio(), vig=fmtDate(validDate()), T=L[lang()];
+async function buildEml(atts,fol){
+  fol=fol||folio(); const vig=fmtDate(validDate()), T=L[lang()];
   const subject=T.subj(fol,$('cliente').value.trim());
   const html=`<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1b2733;line-height:1.5">`+T.body({greet:esc(greeting()),fol:esc(fol),svc:esc(svcText()),eq:esc(eqText()),pay:esc(payText()),vig,seg:esc(segLine()),rep:esc($('ejec').value),web:WEB})+`</div>`;
   const B='----=_HD_'+Date.now().toString(36);
@@ -578,12 +587,14 @@ $('go').onclick=async()=>{
     if(cloud){
       try{
         const ruta='/COTIZACIONES/COTIZACIONES '+$('region').value+'/'+EXEC_DIR($('ejec').value)+'/'+safe(cliN());
-        log('Guardando en Dropbox y Airtable…');
+        const pdfB=await b64(pdf), xB=await b64(xBlob), mb=((pdfB.length+xB.length)*1.4/1048576);
+        log('Guardando en Dropbox y Airtable… ('+mb.toFixed(1)+' MB)');
+        if(mb>4.5)throw new Error('archivos demasiado grandes: '+mb.toFixed(1)+' MB; el límite es ~5 MB');
         const j=await hook(HOOK_SAVE,{secret:HK,ruta,cliente:cliN(),ejecutivo:$('ejec').value,region:$('region').value,folio:fol,
           contacto:clean($('contacto').value),correo:clean($('correo').value),telefono:clean($('tel').value),prefijo:prefix(),idioma:lang()==='en'?'Inglés':'Español',
           tarifa:L.es.svc[$('tarifa').value],seguro:segOn()?'Sí':'No',aseguradora:segOn()?clean(asegName()):'',tasa_seguro:segOn()?parseFloat($('tasa').value):'',equipo:eqText(),moneda:$('moneda').value,pago:L.es.pay[$('pago').value],
           fecha:$('fecha').value,asunto:L[lang()].subj(fol,cliN()),cuerpo:mailBody(),
-          pdf_name:pdfName,xlsx_name:xName,pdf_b64:await b64(pdf),xlsx_b64:await b64(xBlob)});
+          pdf_name:pdfName,xlsx_name:xName,pdf_b64:pdfB,xlsx_b64:xB});
         if(!j.ok)throw new Error('respuesta inesperada');
         saved=true; addClient({cliente:cliN(),pref:prefix(),contacto:clean($('contacto').value),correo:clean($('correo').value),tel:clean($('tel').value),idioma:lang()==='en'?'Inglés':'Español',folio:fol,fecha:$('fecha').value}); renderClients(); log('Guardado en Dropbox: '+ruta,'ok'); log('Registrado en Airtable (💰 Cotizaciones).','ok');
       }catch(e){log('No se pudo guardar en la nube ('+e.message+').','er')}
@@ -597,13 +608,24 @@ $('go').onclick=async()=>{
       log(`Guardado en carpeta: ${pdfName}`,'ok'); log(`Guardado en carpeta: ${xName}`,'ok');
     }
     // copias en Descargas para arrastrarlas al correo
-    download(pdf,pdfName);setTimeout(()=>download(xBlob,xName),600);
-    log(`Descargados en tu carpeta de Descargas: PDF y Excel (arrástralos al correo).`,'ok');
+    download(pdf,pdfName);
+    log(`PDF descargado en tu carpeta de Descargas (el Excel queda solo en Dropbox).`,'ok');
     const link=mailLink();
     const btn=document.createElement('button');btn.className='btn';btn.style.marginTop='8px';btn.textContent='✉️ Abrir correo en Outlook';
     btn.onclick=()=>{if(link.startsWith('mailto:'))location.href=link;else window.open(link,'_blank')};
     $('log').appendChild(btn);
-    log('Paso final: abre el correo y arrastra el PDF y el Excel descargados.','ok');
+    const atts=[{name:pdfName,type:'application/pdf',blob:pdf}];
+    const emlName=safe(`${cli} ${fol}`)+'.eml';
+    const b2=document.createElement('button');b2.className='btn alt';b2.style.cssText='margin:8px 0 0 8px';b2.textContent='📎 Correo con PDF adjunto (.eml)';
+    b2.onclick=async()=>{download(await buildEml(atts,fol),emlName);log('Abre el archivo .eml descargado: se abre en Outlook de escritorio como borrador con el PDF adjunto.','ok')};
+    $('log').appendChild(b2);
+    const files=atts.map(a=>new File([a.blob],a.name,{type:a.type}));
+    if(navigator.canShare&&navigator.canShare({files})){
+      const b3=document.createElement('button');b3.className='btn alt';b3.style.cssText='margin:8px 0 0 8px';b3.textContent='📤 Compartir a Outlook (celular/tablet)';
+      b3.onclick=()=>navigator.share({files,title:L[lang()].subj(fol,$('cliente').value.trim()),text:mailBody()}).catch(()=>{});
+      $('log').appendChild(b3);
+    }
+    log('Para adjuntar: usa «Correo con PDF adjunto» (Outlook de escritorio) o «Compartir» (celular/tablet). En Outlook Web, arrastra el PDF descargado.','ok');
     // consecutivo + historial
     const c=lsGet('hd_counters',{});c[prefix()]=Math.max(c[prefix()]||0,parseInt($('num').value)||1);lsSet('hd_counters',c);
     pushHist(fol);
@@ -673,6 +695,15 @@ $('ejec').addEventListener('change',()=>{$('outlook').value=OUTLOOK_DEF[EXEC_DIR
 $('tarifa').addEventListener('change',()=>{$('region').value=$('tarifa').value==='intraUSA'?'USA':'MEXICO';render()});
 FIELDS.forEach(k=>{$(k).addEventListener('input',render);$(k).addEventListener('change',render)});
 
+$('newQ').onclick=()=>{
+  if(!confirm('¿Borrar todos los datos de esta cotización y empezar una nueva?'))return;
+  ['cliente','contacto','correo','tel','pref','rev','notas','equipoOtro','asegOtra','valorDef'].forEach(k=>$(k).value='');
+  const set=(k,v)=>{$(k).value=v;$(k).dispatchEvent(new Event('change'))};
+  set('idioma','es');set('tarifa','intraMX');set('moneda','MXN');set('pago','30');set('seguro','no');set('aseg','JAH INSURANCE');
+  if($('equipo').options.length)set('equipo',$('equipo').options[0].value);
+  $('fecha').value=iso(new Date()); $('num').value=1; lastCli=''; $('cliInfo').textContent='';
+  $('log').innerHTML=''; resetExcel(); window.scrollTo({top:0,behavior:'smooth'});
+};
 $('fecha').value=iso(new Date());$('outlook').value=OUTLOOK_DEF[EXEC_DIR($('ejec').value)];
 renderGrid();renderHist();render();loadClients();
 </script>
